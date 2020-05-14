@@ -25,6 +25,7 @@ import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.PostAnalysisIssueVisit
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.PullRequestBuildStatusDecorator;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.Anchor;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.FileComment;
+import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.Insights;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.SummaryComment;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.response.diff.Diff;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.response.diff.DiffLine;
@@ -32,18 +33,24 @@ import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.response.dif
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.response.diff.Hunk;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.bitbucket.response.diff.Segment;
 import com.github.mc1arke.sonarqube.plugin.ce.pullrequest.markup.MarkdownFormatterFactory;
+
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.*;
+import static org.sonar.api.rules.RuleType.CODE_SMELL;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.methods.HttpPut;
 import org.apache.http.entity.ContentType;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
+import org.sonar.api.ce.posttask.QualityGate;
 import org.sonar.api.issue.Issue;
+import org.sonar.api.rule.Severity;
 import org.sonar.api.utils.log.Logger;
 import org.sonar.api.utils.log.Loggers;
 import org.sonar.core.issue.DefaultIssue;
@@ -68,11 +75,13 @@ public class BitbucketServerPullRequestDecorator implements PullRequestBuildStat
 
     private static final String REST_API = "/rest/api/1.0/";
     private static final String PROJECT_PR_API = "projects/%s/repos/%s/pull-requests/%s/";
+    private static final String INSIGHTS_API = "/rest/insights/1.0/projects/%s/repos/%s/commits/%s/reports/sonar.pullrequest.key";
     private static final String COMMENTS_API = "comments";
     private static final String DIFF_API = "diff";
 
     private static final String FULL_PR_COMMENT_API = "%s" + REST_API + PROJECT_PR_API + COMMENTS_API;
     private static final String FULL_PR_DIFF_API = "%s" + REST_API + PROJECT_PR_API + DIFF_API;
+    private static final String FULL_PR_INSIGHTS_API = "%s" + INSIGHTS_API;
 
     @Override
     public void decorateQualityGateStatus(AnalysisDetails analysisDetails, AlmSettingDto almSettingDto,
@@ -85,12 +94,15 @@ public class BitbucketServerPullRequestDecorator implements PullRequestBuildStat
             final String repositorySlug = projectAlmSettingDto.getAlmSlug();
             final String pullRequestId = analysisDetails.getBranchName();
             final String projectKey = projectAlmSettingDto.getAlmRepo();
+            final String commitId = analysisDetails.getCommitSha();
 
             String commentUrl = String.format(FULL_PR_COMMENT_API, hostURL, projectKey, repositorySlug, pullRequestId);
             String diffUrl = String.format(FULL_PR_DIFF_API, hostURL, projectKey, repositorySlug, pullRequestId);
+            String insightsUrl = String.format(FULL_PR_INSIGHTS_API, hostURL, projectKey, repositorySlug, commitId);
 
             LOGGER.debug(String.format("Comment URL is: %s ", commentUrl));
             LOGGER.debug(String.format("Diff URL is: %s ", diffUrl));
+            LOGGER.debug(String.format("Insights URL is: %s ", insightsUrl));
 
             Map<String, String> headers = new HashMap<>();
             headers.put("Authorization", String.format("Bearer %s", apiToken));
@@ -98,24 +110,37 @@ public class BitbucketServerPullRequestDecorator implements PullRequestBuildStat
 
             String analysisSummary = analysisDetails.createAnalysisSummary(new MarkdownFormatterFactory());
             StringEntity summaryCommentEntity = new StringEntity(new ObjectMapper().writeValueAsString(new SummaryComment(analysisSummary)), ContentType.APPLICATION_JSON);
-            postComment(commentUrl, headers, summaryCommentEntity);
 
-            DiffPage diffPage = getPage(diffUrl, headers, DiffPage.class);
-            List<PostAnalysisIssueVisitor.ComponentIssue> componentIssues = analysisDetails.getPostAnalysisIssueVisitor().getIssues().stream().filter(i -> OPEN_ISSUE_STATUSES.contains(i.getIssue().status())).collect(Collectors.toList());
-            for (PostAnalysisIssueVisitor.ComponentIssue componentIssue : componentIssues) {
-                final DefaultIssue issue = componentIssue.getIssue();
-                String analysisIssueSummary = analysisDetails.createAnalysisIssueSummary(componentIssue, new MarkdownFormatterFactory());
-                String issuePath = analysisDetails.getSCMPathForIssue(componentIssue).orElse(StringUtils.EMPTY);
-                int issueLine = issue.getLine() != null ? issue.getLine() : 0;
-                String issueType = getIssueType(diffPage, issuePath, issueLine);
-                String fileType = "TO";
-                if (issueType.equals("CONTEXT")) {
-                    fileType = "FROM";
+            String insightsStatus = (QualityGate.Status.OK == analysisDetails.getQualityGateStatus() ? "PASS" : "FAIL");
+            StringEntity summaryInsightEntity = new StringEntity(new ObjectMapper().writeValueAsString(new Insights("SonarQube Quality Report", insightsStatus)), ContentType.APPLICATION_JSON);
+            if (analysisDetails.getBooleanOption(SUMMARY_DECORATION).orElse(Boolean.TRUE)) {
+                postComment(commentUrl, headers, summaryCommentEntity);
+            }
+            if (analysisDetails.getBooleanOption(CODE_INSIGHT).orElse(Boolean.TRUE)) {
+                putComment(insightsUrl, headers, summaryInsightEntity);
+            }
+            if (analysisDetails.getBooleanOption(DIFF_DECORATION).orElse(Boolean.TRUE)) {
+                DiffPage diffPage = getPage(diffUrl, headers, DiffPage.class);
+                List<PostAnalysisIssueVisitor.ComponentIssue> componentIssues = analysisDetails.getPostAnalysisIssueVisitor().getIssues().stream().filter(i -> OPEN_ISSUE_STATUSES.contains(i.getIssue().status())).collect(Collectors.toList());
+                for (PostAnalysisIssueVisitor.ComponentIssue componentIssue : componentIssues) {
+                    final DefaultIssue issue = componentIssue.getIssue();
+                    if ((Severity.ALL.indexOf(issue.severity()) >= Severity.ALL.indexOf(analysisDetails.getStringOption(DIFF_DECORATION_SEVERITY).orElse(Severity.INFO))) &&
+                            (issue.type() != CODE_SMELL ) ||
+                                ((issue.type() == CODE_SMELL) && analysisDetails.getBooleanOption(DIFF_DECORATION_CODE_SMELL).orElse(Boolean.TRUE))) {
+                        String analysisIssueSummary = analysisDetails.createAnalysisIssueSummary(componentIssue, new MarkdownFormatterFactory());
+                        String issuePath = analysisDetails.getSCMPathForIssue(componentIssue).orElse(StringUtils.EMPTY);
+                        int issueLine = issue.getLine() != null ? issue.getLine() : 0;
+                        String issueType = getIssueType(diffPage, issuePath, issueLine);
+                        String fileType = "TO";
+                        if (issueType.equals("CONTEXT")) {
+                            fileType = "FROM";
+                        }
+                        StringEntity fileCommentEntity = new StringEntity(
+                                new ObjectMapper().writeValueAsString(new FileComment(analysisIssueSummary, new Anchor(issueLine, issueType, issuePath, fileType))), ContentType.APPLICATION_JSON
+                        );
+                        postComment(commentUrl, headers, fileCommentEntity);
+                    }
                 }
-                StringEntity fileCommentEntity = new StringEntity(
-                        new ObjectMapper().writeValueAsString(new FileComment(analysisIssueSummary, new Anchor(issueLine, issueType, issuePath, fileType))), ContentType.APPLICATION_JSON
-                );
-                postComment(commentUrl, headers, fileCommentEntity);
             }
         } catch (IOException ex) {
             throw new IllegalStateException("Could not decorate Pull Request on Bitbucket Server", ex);
@@ -196,6 +221,31 @@ public class BitbucketServerPullRequestDecorator implements PullRequestBuildStat
         LOGGER.debug(EntityUtils.toString(requestEntity));
         try (CloseableHttpClient closeableHttpClient = HttpClients.createDefault()) {
             HttpResponse httpResponse = closeableHttpClient.execute(httpPost);
+            if (null == httpResponse) {
+                LOGGER.error("HttpResponse for posting comment was null");
+            } else if (httpResponse.getStatusLine().getStatusCode() != 201) {
+                HttpEntity entity = httpResponse.getEntity();
+                LOGGER.error(IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8.name()));
+            } else {
+                HttpEntity entity = httpResponse.getEntity();
+                LOGGER.debug(IOUtils.toString(entity.getContent(), StandardCharsets.UTF_8.name()));
+                commentPosted = true;
+            }
+        }
+        return commentPosted;
+    }
+
+    protected boolean putComment(String commentUrl, Map<String, String> headers, StringEntity requestEntity)
+            throws IOException {
+        boolean commentPosted = false;
+        HttpPut httpPut = new HttpPut(commentUrl);
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            httpPut.addHeader(entry.getKey(), entry.getValue());
+        }
+        httpPut.setEntity(requestEntity);
+        LOGGER.debug(EntityUtils.toString(requestEntity));
+        try (CloseableHttpClient closeableHttpClient = HttpClients.createDefault()) {
+            HttpResponse httpResponse = closeableHttpClient.execute(httpPut);
             if (null == httpResponse) {
                 LOGGER.error("HttpResponse for posting comment was null");
             } else if (httpResponse.getStatusLine().getStatusCode() != 201) {

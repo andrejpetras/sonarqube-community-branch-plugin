@@ -50,11 +50,18 @@ import org.sonar.api.CoreProperties;
 import org.sonar.api.Plugin;
 import org.sonar.api.PropertyType;
 import org.sonar.api.SonarQubeSide;
+import org.sonar.api.resources.Qualifiers;
 import org.sonar.api.config.PropertyDefinition;
+import org.sonar.api.rule.Severity;
 import org.sonar.core.config.PurgeConstants;
 import org.sonar.core.extension.CoreExtension;
 
 import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.IMAGE_URL_BASE;
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.CODE_INSIGHT;
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.DIFF_DECORATION;
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.DIFF_DECORATION_CODE_SMELL;
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.DIFF_DECORATION_SEVERITY;
+import static com.github.mc1arke.sonarqube.plugin.ce.pullrequest.AnalysisDetails.SUMMARY_DECORATION;
 
 /**
  * @author Michael Clarke
@@ -106,9 +113,59 @@ public class CommunityBranchPlugin implements Plugin, CoreExtension {
                                           .description("URL for the static content.")
                                           .category(CoreProperties.CATEGORY_GENERAL)
                                           .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
-                                          .type(PropertyType.STRING).build()
-                                 );
+                                          .type(PropertyType.STRING).build(),
 
+                                  PropertyDefinition
+                                          .builder(CODE_INSIGHT)
+                                          .name("Enable Code Insight BitBucket Integration")
+                                          .defaultValue(Boolean.TRUE.toString())
+                                          .description("Enable Code Insight BitBucket Integration.")
+                                          .category(CoreProperties.CATEGORY_GENERAL)
+                                          .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
+                                          .onQualifiers(Qualifiers.PROJECT, Qualifiers.MODULE)
+                                          .type(PropertyType.BOOLEAN).build(),
+
+                                  PropertyDefinition
+                                          .builder(DIFF_DECORATION)
+                                          .name("Enable PR Diff Decoration for BitBucket")
+                                          .defaultValue(Boolean.TRUE.toString())
+                                          .description("Enable PR Diff Decoration for BitBucket.")
+                                          .category(CoreProperties.CATEGORY_GENERAL)
+                                          .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
+                                          .onQualifiers(Qualifiers.PROJECT, Qualifiers.MODULE)
+                                          .type(PropertyType.BOOLEAN).build(),
+
+                                  PropertyDefinition
+                                          .builder(SUMMARY_DECORATION)
+                                          .name("Enable PR Summary Decoration for BitBucket")
+                                          .defaultValue(Boolean.TRUE.toString())
+                                          .description("Enable Code Insight BitBucket Integration.")
+                                          .category(CoreProperties.CATEGORY_GENERAL)
+                                          .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
+                                          .onQualifiers(Qualifiers.PROJECT, Qualifiers.MODULE)
+                                          .type(PropertyType.BOOLEAN).build(),
+
+                                  PropertyDefinition
+                                          .builder(DIFF_DECORATION_CODE_SMELL)
+                                          .name("Include Code Smell Issue Type into PR Diff Decoration for BitBucket")
+                                          .defaultValue(Boolean.TRUE.toString())
+                                          .description("Include Code Smell Issue Type into PR Diff Decoration for BitBucket.")
+                                          .category(CoreProperties.CATEGORY_GENERAL)
+                                          .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
+                                          .onQualifiers(Qualifiers.PROJECT)
+                                          .type(PropertyType.BOOLEAN).build(),
+
+                                  PropertyDefinition
+                                          .builder(DIFF_DECORATION_SEVERITY)
+                                          .name("Max Severity included into PR Diff Decoration for BitBucket")
+                                          .defaultValue(Severity.INFO)
+                                          .description("Max Severity included into PR Diff Decoration for BitBucket. Supported INFO, MINOR, MAJOR, CRITICAL, BLOCKER.")
+                                          .category(CoreProperties.CATEGORY_GENERAL)
+                                          .subCategory(CoreProperties.SUBCATEGORY_BRANCHES_AND_PULL_REQUESTS)
+                                          .onQualifiers(Qualifiers.PROJECT)
+                                          .options(Severity.ALL)
+                                          .type(PropertyType.SINGLE_SELECT_LIST).build()
+                                  );
         }
 
     }
